@@ -1,0 +1,90 @@
+name: CI/CD to EC2 (Docker + GHCR)
+
+on:
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare image name & tags
+        run: |
+          echo "REPO=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+          echo "IMAGE=ghcr.io/${REPO}" >> $GITHUB_ENV
+          echo "TAG=${GITHUB_SHA}" >> $GITHUB_ENV
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ env.TAG }}
+            ${{ env.IMAGE }}:latest
+
+      - name: Copy deploy files to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "deploy/*"
+          target: "/srv/myapp"
+
+      - name: Deploy on server
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          IMAGE: ${{ env.IMAGE }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_PAT: ${{ secrets.GHCR_PAT }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          envs: IMAGE,GHCR_USERNAME,GHCR_PAT
+          script: |
+            set -e
+            sudo mkdir -p /srv/myapp
+            cd /srv/myapp
+
+            # Install Docker if missing
+            if ! command -v docker >/dev/null 2>&1; then
+              curl -fsSL https://get.docker.com | sh
+              sudo usermod -aG docker $USER || true
+            fi
+
+            # Install Docker Compose v2 if missing
+            if ! docker compose version >/dev/null 2>&1; then
+              DEST=/usr/local/lib/docker/cli-plugins
+              sudo mkdir -p "$DEST"
+              curl -SL https://github.com/docker/compose/releases/download/v2.29.2/docker-compose-linux-x86_64 -o compose
+              sudo mv compose "$DEST/docker-compose"
+              sudo chmod +x "$DEST/docker-compose"
+            fi
+
+            # Log in to GHCR on the server (for pulling private images)
+            echo "$GHCR_PAT" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+
+            # Inject the freshly built image reference into compose and deploy
+            sed -i "s|IMAGE_PLACEHOLDER|$IMAGE:latest|g" docker-compose.yml
+
+            docker compose pull
+            docker compose up -d
+
+            # Clean up unused layers
+            docker system prune -f

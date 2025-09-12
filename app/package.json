@@ -1,0 +1,12 @@
+{
+  "name": "my-cicd-app",
+  "version": "1.0.0",
+  "description": "Beginner-friendly CI/CD sample app (Docker + GitHub Actions + AWS EC2)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
