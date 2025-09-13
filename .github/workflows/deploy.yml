@@ -36,12 +36,18 @@ jobs:
             ${{ env.IMAGE }}:${{ env.TAG }}
             ${{ env.IMAGE }}:latest
 
+            - name: Write SSH private key to file
+        run: |
+          echo "${{ secrets.EC2_SSH_KEY }}" > key.pem
+          sed -i 's/\r$//' key.pem
+          chmod 600 key.pem
+
       - name: Copy deploy files to server
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
+          key_path: key.pem
           source: "deploy/*"
           target: "/srv/myapp"
 
@@ -54,7 +60,7 @@ jobs:
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
+          key_path: key.pem
           envs: IMAGE,GHCR_USERNAME,GHCR_PAT
           script: |
             set -e
@@ -85,4 +91,6 @@ jobs:
 
             # Clean up unused layers
             docker system prune -f
+
+       
 
